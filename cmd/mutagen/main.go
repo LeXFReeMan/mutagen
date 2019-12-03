@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mutagen-io/mutagen/cmd"
+	"github.com/mutagen-io/mutagen/cmd/mutagen/container"
 	"github.com/mutagen-io/mutagen/cmd/mutagen/daemon"
 	"github.com/mutagen-io/mutagen/cmd/mutagen/forward"
 	"github.com/mutagen-io/mutagen/cmd/mutagen/project"
@@ -68,6 +69,7 @@ func init() {
 		tunnel.RootCommand,
 		loginCommand,
 		logoutCommand,
+		container.RootCommand,
 		daemon.RootCommand,
 		versionCommand,
 		legalCommand,
