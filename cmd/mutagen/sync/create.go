@@ -70,56 +70,50 @@ func loadAndValidateLegacyTOMLConfiguration(path string) (*synchronization.Confi
 	return configuration, nil
 }
 
-// CreateWithSpecification is an orchestration convenience method invokes the
-// creation using the provided session specification. Unlike other orchestration
-// methods, it requires provision of a client to avoid creating one for each
-// request.
+// CreateWithSpecification is an orchestration convenience method that invokes
+// creation using the provided session specification.
 func CreateWithSpecification(
-	service synchronizationsvc.SynchronizationClient,
+	daemonConnection *grpc.ClientConn,
 	specification *synchronizationsvc.CreationSpecification,
 ) error {
-	// Invoke the session create method. The stream will close when the
-	// associated context is cancelled.
+	// Create a cancellable context for this operation.
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stream, err := service.Create(ctx)
+
+	// Start handling prompting in a background Goroutine.
+	prompter, promptingDone, _, err := daemon.HostPrompting(ctx, daemonConnection, true)
 	if err != nil {
-		return errors.Wrap(grpcutil.PeelAwayRPCErrorLayer(err), "unable to invoke create")
+		cancel()
+		return errors.Wrap(err, "unable to start prompting")
 	}
 
-	// Send the initial request.
-	request := &synchronizationsvc.CreateRequest{Specification: specification}
-	if err := stream.Send(request); err != nil {
-		return errors.Wrap(grpcutil.PeelAwayRPCErrorLayer(err), "unable to send create request")
+	// Create a synchronization service client.
+	synchronizationClient := synchronizationsvc.NewSynchronizationClient(daemonConnection)
+
+	// Set up the creation request.
+	request := &synchronizationsvc.CreateRequest{
+		Prompter: prompter,
+		Specification: specification,
 	}
 
-	// Create a status line printer and defer a break.
-	statusLinePrinter := &cmd.StatusLinePrinter{}
-	defer statusLinePrinter.BreakIfNonEmpty()
+	// Perform creation. We don't monitor for prompting failure while doing this
+	// because (a) any network failure that causes a failure for prompting will
+	// also yield a failure here and (b) the only other failure mode for
+	// prompting is process termination, which will also terminate this code.
+	response, err := synchronizationClient.Create(ctx, request)
 
-	// Receive and process responses until we're done.
-	for {
-		if response, err := stream.Recv(); err != nil {
-			return errors.Wrap(grpcutil.PeelAwayRPCErrorLayer(err), "create failed")
-		} else if err = response.EnsureValid(); err != nil {
-			return errors.Wrap(err, "invalid create response received")
-		} else if response.Session != "" {
-			statusLinePrinter.Print(fmt.Sprintf("Created session %s", response.Session))
-			return nil
-		} else if response.Message != "" {
-			statusLinePrinter.Print(response.Message)
-			if err := stream.Send(&synchronizationsvc.CreateRequest{}); err != nil {
-				return errors.Wrap(grpcutil.PeelAwayRPCErrorLayer(err), "unable to send message response")
-			}
-		} else if response.Prompt != "" {
-			statusLinePrinter.BreakIfNonEmpty()
-			if response, err := prompt.PromptCommandLine(response.Prompt); err != nil {
-				return errors.Wrap(err, "unable to perform prompting")
-			} else if err = stream.Send(&synchronizationsvc.CreateRequest{Response: response}); err != nil {
-				return errors.Wrap(grpcutil.PeelAwayRPCErrorLayer(err), "unable to send prompt response")
-			}
-		}
+	// Perform cancellation and wait for prompting to terminate (so that we know
+	// the console is clean).
+	cancel()
+	<-promptingDone
+
+	// Handle errors.
+	if err != nil {
+		return grpcutil.PeelAwayRPCErrorLayer(err)
 	}
+
+	// Success.
+	fmt.Println("Created session", response.Session)
+	return nil
 }
 
 func createMain(command *cobra.Command, arguments []string) error {
@@ -499,17 +493,14 @@ func createMain(command *cobra.Command, arguments []string) error {
 	}
 
 	// Connect to the daemon and defer closure of the connection.
-	daemonConnection, err := daemon.CreateClientConnection(true, true)
+	daemonConnection, err := daemon.Connect(true, true)
 	if err != nil {
 		return errors.Wrap(err, "unable to connect to daemon")
 	}
 	defer daemonConnection.Close()
 
-	// Create a synchronization service client.
-	service := synchronizationsvc.NewSynchronizationClient(daemonConnection)
-
 	// Perform creation.
-	return CreateWithSpecification(service, specification)
+	return CreateWithSpecification(daemonConnection, specification)
 }
 
 var createCommand = &cobra.Command{

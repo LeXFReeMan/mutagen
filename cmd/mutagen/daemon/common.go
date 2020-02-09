@@ -2,9 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
-
-	"github.com/pkg/errors"
 
 	"google.golang.org/grpc"
 
@@ -28,13 +28,14 @@ const (
 	autostartRetryCount = 10
 )
 
-// CreateClientConnection creates a new daemon client connection and optionally
-// verifies that the daemon version matches the current process' version.
-func CreateClientConnection(autostart, enforceVersionMatch bool) (*grpc.ClientConn, error) {
+// Connect establishes a daemon connection with the specified autostart and
+// version matching behavior. Note that the autostart parameter can still be
+// overridden by the MUTAGEN_DISABLE_AUTOSTART environment variable.
+func Connect(autostart, requireVersionMatch bool) (*grpc.ClientConn, error) {
 	// Compute the path to the daemon IPC endpoint.
 	endpoint, err := daemon.EndpointPath()
 	if err != nil {
-		return nil, errors.Wrap(err, "unable to compute endpoint path")
+		return nil, fmt.Errorf("unable to compute endpoint path: %w", err)
 	}
 
 	// Check if autostart has been globally disabled.
@@ -65,8 +66,8 @@ func CreateClientConnection(autostart, enforceVersionMatch bool) (*grpc.ClientCo
 		)
 
 		// Cancel the dialing context. If the dialing operation has already
-		// succeeded, this has no effect, but it is necessary to clean up the
-		// Goroutine that backs the context.
+		// succeeded, this has no effect, but it is necessary avoid leaking
+		// context resources.
 		cancel()
 
 		// Check for errors.
@@ -106,12 +107,12 @@ func CreateClientConnection(autostart, enforceVersionMatch bool) (*grpc.ClientCo
 
 	// If requested, verify that the daemon version matches the current process'
 	// version.
-	if enforceVersionMatch {
+	if requireVersionMatch {
 		daemonService := daemonsvc.NewDaemonClient(connection)
 		version, err := daemonService.Version(context.Background(), &daemonsvc.VersionRequest{})
 		if err != nil {
 			connection.Close()
-			return nil, errors.Wrap(err, "unable to query daemon version")
+			return nil, fmt.Errorf("unable to query daemon version: %w", err)
 		}
 		versionMatch := version.Major == mutagen.VersionMajor &&
 			version.Minor == mutagen.VersionMinor &&

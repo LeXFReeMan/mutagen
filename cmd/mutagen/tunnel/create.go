@@ -64,14 +64,41 @@ func createMain(command *cobra.Command, arguments []string) error {
 	}
 
 	// Connect to the daemon and defer closure of the connection.
-	daemonConnection, err := daemon.CreateClientConnection(true, true)
+	daemonConnection, err := daemon.Connect(true, true)
 	if err != nil {
 		return errors.Wrap(err, "unable to connect to daemon")
 	}
 	defer daemonConnection.Close()
 
+	// Create a cancellable context for this operation.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start handling prompting in a background Goroutine.
+	prompter, promptingDone, _, err := daemon.HostPrompting(ctx, daemonConnection, true)
+	if err != nil {
+		cancel()
+		return errors.Wrap(err, "unable to start prompting")
+	}
+
 	// Create a tunneling service client.
-	tunnelingService := tunnelingsvc.NewTunnelingClient(daemonConnection)
+	tunnelingClient := tunnelingsvc.NewTunnelingClient(daemonConnection)
+
+	// Set up the creation request.
+	request := &tunnelingsvc.CreateRequest{
+		Prompter: prompter,
+		Specification: specification,
+	}
+
+	// Perform creation. We don't monitor for prompting failure while doing this
+	// because (a) any network failure that causes a failure for prompting will
+	// also yield a failure here and (b) the only other failure mode for
+	// prompting is process termination, which will also terminate this code.
+	response, err := tunnelingClient.Create(ctx, request)
+
+	// Perform cancellation and wait for prompting to terminate (so that we know
+	// the console is clean).
+	cancel()
+	<-promptingDone
 
 	// Invoke the tunnel create method. The stream will close when the
 	// associated context is cancelled.

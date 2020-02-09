@@ -58,7 +58,7 @@ func (r *HostResponse) EnsureValid(first, allowPrompts bool) error {
 	// Handle validation based on whether or not this is the first response.
 	if first {
 		// Ensure that the prompter identifier is specified.
-		if r.Prompter == "" {
+		if r.Identifier == "" {
 			return errors.New("empty prompter identifier")
 		}
 
@@ -73,7 +73,7 @@ func (r *HostResponse) EnsureValid(first, allowPrompts bool) error {
 		}
 	} else {
 		// Ensure that the prompter identifier isn't specified again.
-		if r.Prompter != "" {
+		if r.Identifier != "" {
 			return errors.New("unexpected prompter identifier")
 		}
 

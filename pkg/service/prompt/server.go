@@ -34,7 +34,7 @@ func (s *Server) Host(stream Prompting_HostServer) error {
 	}
 
 	// Send the initial response.
-	if err := stream.Send(&HostResponse{Prompter: identifier}); err != nil {
+	if err := stream.Send(&HostResponse{Identifier: identifier}); err != nil {
 		return errors.Wrap(err, "unable to send initial response")
 	}
 
